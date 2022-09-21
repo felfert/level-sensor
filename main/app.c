@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "freertos/event_groups.h"
 #include "esp_wifi.h"
 #include "esp_wpa2.h"
@@ -30,6 +31,7 @@
 #include "tcpip_adapter.h"
 #include "esp_event_loop.h"
 #include "mqtt_client.h"
+#include "driver/gpio.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
@@ -39,34 +41,40 @@
 
 static uint8_t basemac[6];
 static char identity[256];
-static mbedtls_x509_crt mycert;
 static esp_mqtt_client_handle_t client;
 
-// FreeRTOS event group for signalling various application states
+// FreeRTOS event group for signaling various application states
 EventGroupHandle_t appState;
 
-static const int WIFI_CONNECTED_BIT = BIT0;
-static const int OTA_REQUIRED       = BIT1;
-const int OTA_DONE                  = BIT2;
+static const int WIFI_CONNECTED = BIT0;
+static const int MQTT_CONNECTED = BIT1;
+static const int OTA_REQUIRED   = BIT2;
+const int OTA_DONE              = BIT3;
 
 static const char* TAG      = "sensor";
 static const char* TAG_MEM  = "memory";
 static const char* TAG_MQTT = "mqtt";
 
-/* Client cert, taken from client.crt
-   Client key, taken from client.key
-
-   To embed it in the app binary, the CRT and KEY file is named
-   in the component.mk COMPONENT_EMBED_TXTFILES variable.
-*/
-extern uint8_t client_crt_start[] asm("_binary_client_crt_start");
-extern uint8_t client_crt_end[]   asm("_binary_client_crt_end");
-extern uint8_t client_key_start[] asm("_binary_client_key_start");
-extern uint8_t client_key_end[]   asm("_binary_client_key_end");
-extern uint8_t ca_crt_start[] asm("_binary_ca_crt_start");
-extern uint8_t ca_crt_end[]   asm("_binary_ca_crt_end");
+/* *
+ * Client cert, taken from client.crt
+ * Client key, taken from client.key
+ * CA cert, taken from ca.crt
+ *
+ * To embed it in the app binary, the files are named
+ * in the component.mk COMPONENT_EMBED_TXTFILES variable.
+ * All embedded buffers are NULL terminated.
+ */
+static uint8_t client_crt_start[] asm("_binary_client_crt_start");
+static uint8_t client_crt_end[]   asm("_binary_client_crt_end");
+static uint8_t client_key_start[] asm("_binary_client_key_start");
+static uint8_t client_key_end[]   asm("_binary_client_key_end");
+static uint8_t ca_crt_start[]     asm("_binary_ca_crt_start");
+static uint8_t ca_crt_end[]       asm("_binary_ca_crt_end");
 
 const uint8_t *ota_crt_start = ca_crt_start;
+
+static unsigned int client_crt_bytes;
+static unsigned int client_key_bytes;
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, 
         int32_t event_id, void* event_data)
@@ -80,19 +88,17 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
         }
         esp_wifi_connect();
-        xEventGroupClearBits(appState, WIFI_CONNECTED_BIT);
+        xEventGroupClearBits(appState, WIFI_CONNECTED);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        xEventGroupSetBits(appState, WIFI_CONNECTED_BIT);
+        xEventGroupSetBits(appState, WIFI_CONNECTED);
     }
 }
 
-static void wifi_init(void)
-{
-    unsigned int client_crt_bytes = client_crt_end - client_crt_start;
-    unsigned int client_key_bytes = client_key_end - client_key_start;
-
-
-    // Get the CN from our client certificate, because we need it as identity for EAP-TLS
+/**
+ *  Get the CN from our client certificate, because we need it as identity for EAP-TLS
+ */
+static void init_identity() {
+    mbedtls_x509_crt mycert;
     mbedtls_x509_crt_init(&mycert);
     if (0 > mbedtls_x509_crt_parse(&mycert, client_crt_start, client_crt_bytes)) {
         ESP_LOGE(TAG, "Unable to parse client cert");
@@ -100,7 +106,15 @@ static void wifi_init(void)
     }
     getOidByName(&(&mycert)->subject, "CN", identity, sizeof(identity));
     mbedtls_x509_crt_free(&mycert);
-    ESP_LOGI(TAG, "My CN: '%s'", identity);
+}
+
+static void wifi_init(void)
+{
+    client_crt_bytes = client_crt_end - client_crt_start;
+    client_key_bytes = client_key_end - client_key_start;
+    init_identity();
+    ESP_LOGI(TAG, "My MAC: "MACSTR, MAC2STR(basemac));
+    ESP_LOGI(TAG, "My CN:  %s", identity);
 
     tcpip_adapter_init();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -122,6 +136,64 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
+static xQueueHandle gpio_evt_queue = NULL;
+
+#define GPIO_INPUT 4 // GPIO4 aka D2 on NodeMCU or D1 mini
+
+static void gpio_isr(void *arg) {
+    // enqueue events only if we are connected to MQTT
+    if (xEventGroupWaitBits(appState, MQTT_CONNECTED, pdFALSE, pdFALSE, 0) & MQTT_CONNECTED) {
+        uint32_t gpio_num = (uint32_t) arg;
+        xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+    }
+}
+
+static void topic_from_gpio(char *buf, ssize_t buflen, int gpio) {
+    snprintf(buf, buflen, "esp8266/gpio%d/%d", gpio, gpio_get_level(gpio));
+}
+
+
+static int last_level;
+
+static void gpio_task(void * pvParameter) {
+    uint32_t io_num;
+    while (1) {
+        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            int lvl = gpio_get_level(io_num);
+            if (last_level != lvl) {
+                vTaskDelay(10 / portTICK_PERIOD_MS); // demux
+                if (lvl == gpio_get_level(io_num)) {
+                    last_level = lvl;
+                    ESP_LOGD(TAG, "GPIO[%d] intr, val: %d", io_num, lvl);
+                    char topic[50];
+                    topic_from_gpio(topic, sizeof(topic), io_num);
+                    esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
+                }
+            }
+        }
+    }
+}
+
+static void init_gpio() {
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_NEGEDGE,
+        .pin_bit_mask = 1ULL << GPIO_INPUT,
+        .mode = GPIO_MODE_INPUT,
+        .pull_down_en = 0,
+        .pull_up_en = 1
+    };
+    gpio_config(&io_conf);
+    last_level = gpio_get_level(GPIO_INPUT);
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+
+    xTaskCreate(&gpio_task, "gpio_task", 2048, NULL, 10, NULL);
+
+    //install gpio isr service
+    gpio_install_isr_service(0);
+    //hook isr handler for specific gpio pin
+    gpio_isr_handler_add(GPIO_INPUT, gpio_isr, (void *)GPIO_INPUT);
+}
+
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
@@ -132,8 +204,14 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity, 0, 0, 0);
             ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
+            char topic[50];
+            topic_from_gpio(topic, sizeof(topic), GPIO_INPUT);
+            msg_id = esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
+            ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
+            xEventGroupSetBits(appState, MQTT_CONNECTED);
             break;
         case MQTT_EVENT_DISCONNECTED:
+            xEventGroupClearBits(appState, MQTT_CONNECTED);
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_DISCONNECTED");
             break;
         case MQTT_EVENT_SUBSCRIBED:
@@ -183,10 +261,12 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
 
 static void mqtt_init(void)
 {
+    char idbuf[100];
+    snprintf(idbuf, sizeof(idbuf), "esp8266-"MACSTR, MAC2STR(basemac));
     const esp_mqtt_client_config_t mqtt_cfg = {
         .uri = CONFIG_MQTTS_URI,
         .event_handle = mqtt_event_handler,
-        .client_id = identity,
+        .client_id = idbuf,
         .lwt_topic = "esp8266/dead",
         .lwt_msg = identity,
         .client_cert_pem = (const char *)client_crt_start,
@@ -245,9 +325,9 @@ void app_main()
     tcpip_adapter_ip_info_t ip;
     memset(&ip, 0, sizeof(tcpip_adapter_ip_info_t));
     while (1) {
-        EventBits_t bits = xEventGroupWaitBits(appState, WIFI_CONNECTED_BIT,
+        EventBits_t bits = xEventGroupWaitBits(appState, WIFI_CONNECTED,
                 pdFALSE, pdFALSE, 2000 / portTICK_PERIOD_MS);
-        if (bits & WIFI_CONNECTED_BIT) {
+        if (bits & WIFI_CONNECTED) {
             printf("\r\n"); // WiFi connected message does not have a linefeed
             if (tcpip_adapter_get_ip_info(ESP_IF_WIFI_STA, &ip) == 0) {
                 ESP_LOGI(TAG, "IP:   "IPSTR, IP2STR(&ip.ip));
@@ -256,6 +336,7 @@ void app_main()
             }
             if (ESP_OK == esp_mqtt_client_start(client)) {
                 xTaskCreate(&update_check_task, "update_check_task", 2048, NULL, 2, NULL);
+                init_gpio();
                 break;
             }
             vTaskDelay(2000 / portTICK_PERIOD_MS);
