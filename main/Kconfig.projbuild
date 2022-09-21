@@ -1,0 +1,21 @@
+menu "Application Configuration"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "FRITZU"
+        help
+            SSID (network name) to connect to.
+
+    config MQTTS_URI
+        string "MQTTS URI"
+        default "mqtts://mqtt.fe.think:8883"
+        help
+            The MQTTS URI of the broker to use.
+
+    config OTA_URI
+        string "OTA URI"
+        default "https://fsun.fe.think/esp8266_updates/level-sensor.bin"
+        help
+            The URI where to fetch application updates.
+
+endmenu
