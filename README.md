@@ -28,10 +28,10 @@ Steps to build/flash/run this app:
 6. Run make flash monitor
 
 Note:
-There are A LOT of HOWTOs and instructions on the Internet which use the Arduino IDE and an ancient NON-OS SDK.
-DO NOT USE these. The ancient NON-OS SDK is OUTDATED and DANGEROUS. For example it uses TLS v1.1 for EAP-TLS
-which is considered insecure and therefore is NOT supported by any decent Radius anymore. This is BTW the reason,
-WHY those other examples do NOT work.
+There are **A LOT** of HOWTOs and instructions on the Internet which use the Arduino IDE and an ancient NON-OS SDK.
+**DO NOT USE** these. The ancient NON-OS SDK is **OUTDATED**, **UNMAINTAINED**  and **DANGEROUS**. For example it
+uses TLS v1.1 for EAP-TLS which is considered insecure and therefore is **NOT** supported by any decent Radius anymore.
+This is BTW the reason, WHY those other examples do NOT work.
 
 The new SDK mentioned above is actively maintained, uses decent libs and provides support
 for TLS v1.2 and given that, WiFi EAP-TLS actually works.
