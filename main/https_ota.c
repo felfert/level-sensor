@@ -24,6 +24,8 @@
 #include "esp_http_client.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 
@@ -33,6 +35,60 @@
 static const char *TAG = "OTA update";
 
 static int invalid_content_type = 0;
+
+// Last modified header of last successful download. Stored in NVS
+static char if_modified_since[256] = "\0";
+static char last_modified[256] = "\0";
+#define IF_MODIFIED_SINCE_NVS_KEY "ota_lms"
+
+static void get_if_modified_since() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("my_ota", NVS_READWRITE, &nvs_handle);
+    if (ESP_OK == err) {
+        size_t sz = sizeof(if_modified_since);
+        err = nvs_get_str(nvs_handle, IF_MODIFIED_SINCE_NVS_KEY, if_modified_since, &sz);
+        switch (err) {
+            case ESP_OK:
+                ESP_LOGD(TAG, "got from NVS: \"%s\"", if_modified_since);
+                break;
+            case ESP_ERR_NVS_NOT_FOUND:
+                if_modified_since[0] = '\0';
+                break;
+            default:
+                ESP_LOGE(TAG, "Unable to read NVS: %s", esp_err_to_name(err));
+                if_modified_since[0] = '\0';
+                break;
+        }
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Unable to open NVS: %s", esp_err_to_name(err));
+        if_modified_since[0] = '\0';
+    }
+}
+
+static void set_if_modified_since(const char *value) {
+    if ((NULL == value) || 0 == strlen(value)) {
+        return;
+    }
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("my_ota", NVS_READWRITE, &nvs_handle);
+    if (ESP_OK == err) {
+        err = nvs_set_str(nvs_handle, IF_MODIFIED_SINCE_NVS_KEY, value);
+        switch (err) {
+            case ESP_OK:
+                ESP_LOGD(TAG, "wrote to NVS: \"%s\"", value);
+                break;
+            default:
+                ESP_LOGE(TAG, "Unable to write NVS: %s", esp_err_to_name(err));
+                break;
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Unable to open NVS: %s", esp_err_to_name(err));
+    }
+}
+
 static void http_cleanup(esp_http_client_handle_t client)
 {
     esp_http_client_close(client);
@@ -41,6 +97,7 @@ static void http_cleanup(esp_http_client_handle_t client)
 
 static esp_err_t https_ota(const esp_http_client_config_t *config)
 {
+    esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
     invalid_content_type = 0;
     if (!config) {
         ESP_LOGE(TAG, "esp_http_client config not found");
@@ -67,6 +124,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     }
 #endif
 
+    get_if_modified_since();
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);
@@ -76,6 +134,11 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     esp_http_client_fetch_headers(client);
 
     int http_status = esp_http_client_get_status_code(client);
+    if (304 <= http_status) {
+        ESP_LOGI(TAG, "No new firmware available");
+        http_cleanup(client);
+        return ESP_ERR_INVALID_STATE;
+    }
     if (400 <= http_status) {
         ESP_LOGE(TAG, "HTTP request returned error %d", http_status);
         http_cleanup(client);
@@ -114,6 +177,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "Please Wait. This may take time");
+    esp_log_level_set("HTTP_CLIENT", ESP_LOG_INFO);
     int binary_file_len = 0;
     while (1) {
         int data_read = esp_http_client_read(client, upgrade_data_buf, OTA_BUF_SIZE);
@@ -168,12 +232,19 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
         case HTTP_EVENT_ON_CONNECTED:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
             esp_http_client_set_header(evt->client, "User-Agent", "ESP8266 OTA Updater/1.0");
+            if (0 < strlen(if_modified_since)) {
+                esp_http_client_set_header(evt->client, "If-Modified-Since", if_modified_since);
+            }
             break;
         case HTTP_EVENT_HEADERS_SENT:
             ESP_LOGD(TAG, "HTTP_EVENT_HEADERS_SENT");
             break;
         case HTTP_EVENT_ON_HEADER:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            if (0 == strcasecmp(evt->header_key, "Last-Modified")) {
+                strcpy(last_modified, evt->header_value);
+                return ESP_OK;
+            }
             if (0 == strcasecmp(evt->header_key, "Content-Type") && strcmp(evt->header_value, "application/octet-stream")) {
                 ESP_LOGE(TAG, "Invalid content type %s", evt->header_value);
                 invalid_content_type = 1;
@@ -202,11 +273,16 @@ void ota_task(void * pvParameter)
         .event_handler = _http_event_handler,
     };
     esp_err_t ret = https_ota(&config);
-    if (ret == ESP_OK) {
+    if (ESP_OK == ret) {
+        if (0 < strlen(last_modified)) {
+            set_if_modified_since(last_modified);
+        }
         ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
         esp_restart();
     } else {
-        ESP_LOGE(TAG, "Firmware upgrade failed");
+        if (ESP_ERR_INVALID_STATE != ret) {
+            ESP_LOGE(TAG, "Firmware upgrade failed");
+        }
         xEventGroupSetBits(appState, OTA_DONE);
         vTaskDelete(NULL);
         return;

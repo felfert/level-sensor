@@ -200,6 +200,7 @@ static void enable_debug(int enable) {
         esp_log_level_set("sensor", ESP_LOG_DEBUG);
         esp_log_level_set("OTA update", ESP_LOG_DEBUG);
         esp_log_level_set("mqtt", ESP_LOG_DEBUG);
+        esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
         ESP_LOGI(TAG, "debug enabled");
     } else {
         esp_log_level_set("wifi", ESP_LOG_INFO);
@@ -315,7 +316,7 @@ static void mqtt_init(void)
 static void update_check_task(void * pvParameter) {
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(appState, OTA_REQUIRED,
-                pdTRUE, pdFALSE, 2000 / portTICK_PERIOD_MS);
+                pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & OTA_REQUIRED) {
             ESP_LOGI(TAG, "Firmware update requested, shutting down MQTT");
             ESP_ERROR_CHECK(esp_mqtt_client_stop(client));
@@ -328,6 +329,7 @@ static void update_check_task(void * pvParameter) {
                     ESP_LOGD(TAG_MEM, "Free memory: %d bytes", esp_get_free_heap_size());
                     ESP_LOGI(TAG, "Restarting MQTT");
                     ESP_ERROR_CHECK(esp_mqtt_client_start(client));
+                    break;
                 }
             }
         }
