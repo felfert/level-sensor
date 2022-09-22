@@ -194,6 +194,22 @@ static void init_gpio() {
     gpio_isr_handler_add(GPIO_INPUT, gpio_isr, (void *)GPIO_INPUT);
 }
 
+static void enable_debug(int enable) {
+    if (enable) {
+        esp_log_level_set("wifi", ESP_LOG_DEBUG);
+        esp_log_level_set("sensor", ESP_LOG_DEBUG);
+        esp_log_level_set("OTA update", ESP_LOG_DEBUG);
+        esp_log_level_set("mqtt", ESP_LOG_DEBUG);
+        ESP_LOGI(TAG, "debug enabled");
+    } else {
+        esp_log_level_set("wifi", ESP_LOG_INFO);
+        esp_log_level_set("sensor", ESP_LOG_INFO);
+        esp_log_level_set("OTA update", ESP_LOG_INFO);
+        esp_log_level_set("mqtt", ESP_LOG_INFO);
+        ESP_LOGI(TAG, "debug disabled");
+    }
+}
+
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
@@ -201,6 +217,8 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_CONNECTED");
             msg_id = esp_mqtt_client_subscribe(client, "esp8266/update", 0);
+            msg_id = esp_mqtt_client_subscribe(client, "esp8266/debug", 0);
+            msg_id = esp_mqtt_client_subscribe(client, "esp8266/nodebug", 0);
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity, 0, 0, 0);
             ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
@@ -240,6 +258,20 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
                     } else {
                         // empty data means: update all devices on the net
                         xEventGroupSetBits(appState, OTA_REQUIRED);
+                    }
+                }
+                if ((0 == strcmp(topic, "esp8266/debug")) || (0 == strcmp(topic, "esp8266/nodebug"))) {
+                    int enable = (0 == strcmp(topic, "esp8266/debug"));
+                    if (0 < event->data_len) {
+                        // check our client CN
+                        char *data = strndup(event->data, event->data_len);
+                        if (0 == strcmp(data, identity)) {
+                            enable_debug(enable);
+                        }
+                        free(data);
+                    } else {
+                        // empty data means: update all devices on the net
+                        enable_debug(enable);
                     }
                 }
                 free(topic);
@@ -305,10 +337,7 @@ static void update_check_task(void * pvParameter) {
 void app_main()
 {
     esp_log_level_set("*", ESP_LOG_WARN);
-    esp_log_level_set("wifi", ESP_LOG_INFO);
-    esp_log_level_set("sensor", ESP_LOG_INFO);
-    esp_log_level_set("OTA update", ESP_LOG_INFO);
-    esp_log_level_set("mqtt", ESP_LOG_INFO);
+    enable_debug(0);
     ESP_LOGD(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "APP build: %s %s", __DATE__, __TIME__);
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
