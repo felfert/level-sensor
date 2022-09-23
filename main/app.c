@@ -212,15 +212,34 @@ static void enable_debug(int enable) {
     }
 }
 
+static void mqtt_action(const char *topic, const char *data) {
+    int match_exact = ((NULL != data) && (0 == strcmp(data, identity)));
+    int match_any = (NULL == data);
+    if (match_exact && (0 == strcmp(topic, "esp8266/nvserase"))) {
+        ESP_LOGI(TAG, "Erasing non volatile storage");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        return;
+    }
+    if (0 == strcmp(topic, "esp8266/update")) {
+        if (match_exact || match_any) {
+            xEventGroupSetBits(appState, OTA_REQUIRED);
+        }
+        return;
+    }
+    if ((0 == strcmp(topic, "esp8266/debug")) || (0 == strcmp(topic, "esp8266/nodebug"))) {
+        if (match_exact || match_any) {
+            enable_debug(strcmp(topic, "esp8266/nodebug"));
+        }
+    }
+}
+
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_CONNECTED");
-            msg_id = esp_mqtt_client_subscribe(client, "esp8266/update", 0);
-            msg_id = esp_mqtt_client_subscribe(client, "esp8266/debug", 0);
-            msg_id = esp_mqtt_client_subscribe(client, "esp8266/nodebug", 0);
+            msg_id = esp_mqtt_client_subscribe(client, "esp8266/#", 0);
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity, 0, 0, 0);
             ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
@@ -249,32 +268,13 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
             ESP_LOGD(TAG_MQTT, "DATA=%.*s", event->data_len, event->data);
             if (0 < event->topic_len) {
                 char *topic = strndup(event->topic, event->topic_len);
-                if (0 == strcmp(topic, "esp8266/update")) {
-                    if (0 < event->data_len) {
-                        // check our client CN
-                        char *data = strndup(event->data, event->data_len);
-                        if (0 == strcmp(data, identity)) {
-                            xEventGroupSetBits(appState, OTA_REQUIRED);
-                        }
-                        free(data);
-                    } else {
-                        // empty data means: update all devices on the net
-                        xEventGroupSetBits(appState, OTA_REQUIRED);
-                    }
+                char *data = NULL;
+                if (0 < event->data_len) {
+                    data = strndup(event->data, event->data_len);
                 }
-                if ((0 == strcmp(topic, "esp8266/debug")) || (0 == strcmp(topic, "esp8266/nodebug"))) {
-                    int enable = (0 == strcmp(topic, "esp8266/debug"));
-                    if (0 < event->data_len) {
-                        // check our client CN
-                        char *data = strndup(event->data, event->data_len);
-                        if (0 == strcmp(data, identity)) {
-                            enable_debug(enable);
-                        }
-                        free(data);
-                    } else {
-                        // empty data means: update all devices on the net
-                        enable_debug(enable);
-                    }
+                mqtt_action(topic, data);
+                if (data) {
+                    free(data);
                 }
                 free(topic);
             }
@@ -341,7 +341,7 @@ void app_main()
 {
     esp_log_level_set("*", ESP_LOG_WARN);
     enable_debug(0);
-    esp_app_desc_t *ad = esp_ota_get_app_description();
+    const esp_app_desc_t *ad = esp_ota_get_app_description();
     ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "APP version: %s", ad->version);
     ESP_LOGI(TAG, "APP build: %s %s", ad->date, ad->time);
