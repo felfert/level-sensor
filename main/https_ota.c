@@ -31,6 +31,14 @@
 
 #include "common.h"
 
+static const char *wheel_char = "/-\\|";
+static int wheel_idx = 0;
+static void wheel() {
+    printf("%c\r", wheel_char[wheel_idx]);
+    fflush(stdout);
+    wheel_idx = (wheel_idx + 1) % 4;
+}
+
 #define OTA_BUF_SIZE    CONFIG_OTA_BUF_SIZE
 static const char *TAG = "OTA update";
 
@@ -97,7 +105,6 @@ static void http_cleanup(esp_http_client_handle_t client)
 
 static esp_err_t https_ota(const esp_http_client_config_t *config)
 {
-    esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
     invalid_content_type = 0;
     if (!config) {
         ESP_LOGE(TAG, "esp_http_client config not found");
@@ -152,14 +159,14 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
 
     esp_ota_handle_t update_handle = 0;
     const esp_partition_t *update_partition = NULL;
-    ESP_LOGI(TAG, "Starting OTA...");
+    ESP_LOGI(TAG, "Downloading ...");
     update_partition = esp_ota_get_next_update_partition(NULL);
     if (update_partition == NULL) {
         ESP_LOGE(TAG, "Passive OTA partition not found");
         http_cleanup(client);
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%x",
+    ESP_LOGD(TAG, "Writing to partition subtype %d at offset 0x%x",
              update_partition->subtype, update_partition->address);
 
     err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
@@ -168,7 +175,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
         http_cleanup(client);
         return err;
     }
-    ESP_LOGI(TAG, "esp_ota_begin succeeded");
+    ESP_LOGD(TAG, "esp_ota_begin succeeded");
 
     esp_err_t ota_write_err = ESP_OK;
     char *upgrade_data_buf = (char *)malloc(OTA_BUF_SIZE);
@@ -176,8 +183,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
         ESP_LOGE(TAG, "Could not allocate memory to upgrade data buffer");
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "Please Wait. This may take time");
-    esp_log_level_set("HTTP_CLIENT", ESP_LOG_INFO);
+    ESP_LOGI(TAG, "Please wait. This may take time");
     int binary_file_len = 0;
     while (1) {
         int data_read = esp_http_client_read(client, upgrade_data_buf, OTA_BUF_SIZE);
@@ -252,7 +258,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
             }
             break;
         case HTTP_EVENT_ON_DATA:
-            putchar('.');
+            wheel();
             break;
         case HTTP_EVENT_ON_FINISH:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
@@ -266,7 +272,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 
 void ota_task(void * pvParameter)
 {
-    ESP_LOGI(TAG, "Downloading %s", CONFIG_OTA_URI);
+    ESP_LOGI(TAG, "Checking %s", CONFIG_OTA_URI);
     esp_http_client_config_t config = {
         .url = CONFIG_OTA_URI,
         .cert_pem = (char *)ota_crt_start,

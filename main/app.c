@@ -156,6 +156,9 @@ static void topic_from_gpio(char *buf, ssize_t buflen, int gpio) {
 
 static int last_level;
 
+/**
+ * Publish any change of GPIO pin to MQTT.
+ */
 static void gpio_task(void * pvParameter) {
     uint32_t io_num;
     while (1) {
@@ -175,6 +178,9 @@ static void gpio_task(void * pvParameter) {
     }
 }
 
+/**
+ * Configure GPIO pin ad setup ISR.
+ */
 static void init_gpio() {
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,
@@ -189,9 +195,9 @@ static void init_gpio() {
 
     xTaskCreate(&gpio_task, "gpio_task", 2048, NULL, 10, NULL);
 
-    //install gpio isr service
+    // install gpio isr service
     gpio_install_isr_service(0);
-    //hook isr handler for specific gpio pin
+    // hook isr handler for specific gpio pin
     gpio_isr_handler_add(GPIO_INPUT, gpio_isr, (void *)GPIO_INPUT);
 }
 
