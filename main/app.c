@@ -32,6 +32,7 @@
 #include "esp_event_loop.h"
 #include "mqtt_client.h"
 #include "driver/gpio.h"
+#include "esp_ota_ops.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
@@ -340,9 +341,11 @@ void app_main()
 {
     esp_log_level_set("*", ESP_LOG_WARN);
     enable_debug(0);
-    ESP_LOGD(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "APP build: %s %s", __DATE__, __TIME__);
-    ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
+    esp_app_desc_t *ad = esp_ota_get_app_description();
+    ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "APP version: %s", ad->version);
+    ESP_LOGI(TAG, "APP build: %s %s", ad->date, ad->time);
+    ESP_LOGI(TAG, "IDF version: %s", ad->idf_ver);
     appState = xEventGroupCreate();
 
     ESP_ERROR_CHECK(nvs_flash_init());
