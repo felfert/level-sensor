@@ -85,7 +85,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         system_event_sta_disconnected_t *event = (system_event_sta_disconnected_t *)event_data;
         if (event->reason == WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
-            /*Switch to 802.11 bgn mode */
+            // Switch to 802.11 bgn mode
             esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
         }
         esp_wifi_connect();
@@ -141,40 +141,49 @@ static xQueueHandle gpio_evt_queue = NULL;
 
 #define GPIO_INPUT 4 // GPIO4 aka D2 on NodeMCU or D1 mini
 
+static int last_level = -2;
+
+/**
+ * Publish current state of GPIO pin to MQTT.
+ * This is in a separate function, so that it can be
+ * invoked at boot.
+ */
+static void publish_gpio(uint32_t gpio) {
+    int lvl = gpio_get_level(gpio);
+    if (last_level != lvl) {
+        vTaskDelay(10 / portTICK_PERIOD_MS); // debounce
+        if (lvl == gpio_get_level(gpio)) {
+            last_level = lvl;
+            char topic[50];
+            snprintf(topic, sizeof(topic), "esp8266/gpio%d/%d", gpio, gpio_get_level(gpio));
+            esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
+        }
+    }
+}
+
+/**
+ * GPIO task
+ * Publishes changes queued by the ISR to MQTT.
+ */
+static void gpio_task(void * pvParameter) {
+    uint32_t gpio;
+    while (1) {
+        if (xQueueReceive(gpio_evt_queue, &gpio, portMAX_DELAY)) {
+            ESP_LOGD(TAG, "GPIO[%d] intr", gpio);
+            publish_gpio(gpio);
+        }
+    }
+}
+
+/**
+ * The gpio ISR
+ * Just enqueues an event.
+ */
 static void gpio_isr(void *arg) {
     // enqueue events only if we are connected to MQTT
     if (xEventGroupWaitBits(appState, MQTT_CONNECTED, pdFALSE, pdFALSE, 0) & MQTT_CONNECTED) {
         uint32_t gpio_num = (uint32_t) arg;
         xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-    }
-}
-
-static void topic_from_gpio(char *buf, ssize_t buflen, int gpio) {
-    snprintf(buf, buflen, "esp8266/gpio%d/%d", gpio, gpio_get_level(gpio));
-}
-
-
-static int last_level;
-
-/**
- * Publish any change of GPIO pin to MQTT.
- */
-static void gpio_task(void * pvParameter) {
-    uint32_t io_num;
-    while (1) {
-        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-            int lvl = gpio_get_level(io_num);
-            if (last_level != lvl) {
-                vTaskDelay(10 / portTICK_PERIOD_MS); // demux
-                if (lvl == gpio_get_level(io_num)) {
-                    last_level = lvl;
-                    ESP_LOGD(TAG, "GPIO[%d] intr, val: %d", io_num, lvl);
-                    char topic[50];
-                    topic_from_gpio(topic, sizeof(topic), io_num);
-                    esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
-                }
-            }
-        }
     }
 }
 
@@ -190,7 +199,6 @@ static void init_gpio() {
         .pull_up_en = 1
     };
     gpio_config(&io_conf);
-    last_level = gpio_get_level(GPIO_INPUT);
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
 
     xTaskCreate(&gpio_task, "gpio_task", 2048, NULL, 10, NULL);
@@ -249,10 +257,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity, 0, 0, 0);
             ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
-            char topic[50];
-            topic_from_gpio(topic, sizeof(topic), GPIO_INPUT);
-            msg_id = esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
-            ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
+            publish_gpio(GPIO_INPUT);
             xEventGroupSetBits(appState, MQTT_CONNECTED);
             break;
         case MQTT_EVENT_DISCONNECTED:
