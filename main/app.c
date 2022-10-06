@@ -52,6 +52,8 @@ static const int MQTT_CONNECTED = BIT1;
 static const int OTA_REQUIRED   = BIT2;
 const int OTA_DONE              = BIT3;
 
+static const esp_app_desc_t *ad;
+
 static const char* TAG      = "sensor";
 static const char* TAG_MEM  = "memory";
 static const char* TAG_MQTT = "mqtt";
@@ -162,6 +164,15 @@ static void publish_gpio(uint32_t gpio) {
 }
 
 /**
+ * Publish current version to MQTT.
+ */
+static void publish_version() {
+    char topic[50];
+    snprintf(topic, sizeof(topic), "esp8266/version/%s", ad->version);
+    esp_mqtt_client_publish(client, topic, identity, 0, 0, 0);
+}
+
+/**
  * GPIO task
  * Publishes changes queued by the ISR to MQTT.
  */
@@ -257,6 +268,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity, 0, 0, 0);
             ESP_LOGD(TAG_MQTT, "sent publish successful, msg_id=%d", msg_id);
+            publish_version();
             publish_gpio(GPIO_INPUT);
             xEventGroupSetBits(appState, MQTT_CONNECTED);
             break;
@@ -352,7 +364,7 @@ void app_main()
 {
     esp_log_level_set("*", ESP_LOG_WARN);
     enable_debug(0);
-    const esp_app_desc_t *ad = esp_ota_get_app_description();
+    ad = esp_ota_get_app_description();
     ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "APP version: %s", ad->version);
     ESP_LOGI(TAG, "APP build: %s %s", ad->date, ad->time);
