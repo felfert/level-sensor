@@ -9,4 +9,4 @@ COMPONENT_EMBED_TXTFILES += client.crt
 COMPONENT_EMBED_TXTFILES += client.key
 COMPONENT_EMBED_TXTFILES += ca.crt
 
-
+CXXFLAGS += -Wno-missing-field-initializers

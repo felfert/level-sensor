@@ -275,7 +275,7 @@ void ota_task(void * pvParameter)
     ESP_LOGI(TAG, "Checking %s", CONFIG_OTA_URI);
     esp_http_client_config_t config = {
         .url = CONFIG_OTA_URI,
-        .cert_pem = (char *)ota_crt_start,
+        .cert_pem = (char *)pvParameter,
         .event_handler = _http_event_handler,
     };
     esp_err_t ret = https_ota(&config);

@@ -5,6 +5,8 @@
 
 PROJECT_NAME := level-sensor
 
+CFLAGS += -DLWIP_DHCP_GET_NTP_SRV=1
+CXXFLAGS += -DLWIP_DHCP_GET_NTP_SRV=1
 include $(IDF_PATH)/make/project.mk
 
 otaupdate: all

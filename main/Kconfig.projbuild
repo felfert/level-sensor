@@ -1,5 +1,39 @@
 menu "Application Configuration"
 
+    config SYSLOG_HOST
+        string "Syslog destination"
+        default "loghost.fe.think"
+        help
+            The host name or IP of the syslog server. If a non-standard
+            port is required, specify it by appending it with a colon. E.g.:
+            192.168.1.1:515
+
+    config SYSLOG_MINHEAP
+        int "Minimum heap size in bytes"
+        default 8192
+        help
+            If free heap space is less than this value, syslog will
+            discard messages until free space grows above this value again.
+
+    config SYSLOG_FILTER
+        int "Minimum severity for sending"
+        default 7
+        help
+            A severity numerical higher than this will be dropped instead of being queued/send
+
+    config SYSLOG_SENDDATE
+        bool "Enable sending a timestamp"
+        default y
+        help
+            If enabled, send a timestamp with every message (requires time synced via NTP)
+
+    config TZ
+        string "Timezone spec"
+        default "CET-1CEST,M3.5.0,M10.5.0/03:00:00"
+        help
+            The local timezone specification
+            See https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+
     config WIFI_SSID
         string "WiFi SSID"
         default "FRITZU"

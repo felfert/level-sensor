@@ -1,4 +1,5 @@
 build
+sdkconfig.old
 main/ca.crt
 main/client.crt
 main/client.key
