@@ -144,7 +144,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+        syslogx(LOG_ERR, TAG, "Failed to open HTTPS connection: %s", esp_err_to_name(err));
         return err;
     }
     esp_http_client_fetch_headers(client);
@@ -293,7 +293,6 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 void ota_task(void * pvParameter)
 {
     ESP_LOGI(TAG, "Checking %s", CONFIG_OTA_URI);
-    syslogx(LOG_NOTICE, TAG, "Checking %s", CONFIG_OTA_URI);
     esp_http_client_config_t config = {
         .url = CONFIG_OTA_URI,
         .cert_pem = (char *)pvParameter,
@@ -306,6 +305,7 @@ void ota_task(void * pvParameter)
         }
         ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
         syslogx(LOG_NOTICE, TAG, "Firmware upgrade successful, rebooting...");
+        closelog();
         esp_restart();
     } else {
         if (ESP_ERR_INVALID_STATE != ret) {

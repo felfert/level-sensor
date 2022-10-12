@@ -79,7 +79,7 @@ extern void vsyslogx(int __pri, const char *app, const char *__fmt, va_list alis
 /** See openlog(3) except option has no effect */
 extern void openlog(const char *ident, int option, int facility);
 
-/** NOP - just for compatibilioty */
+/** Blocks, until syslog message-queue is empty */
 extern void closelog(void);
 
 /** See setlogmask(3) */

@@ -54,7 +54,7 @@ struct syslog_entry_t {
     char        msg[]; // Holds appname followed by message (both 0-terminated)
 };
 
-#define TAG "syslog"
+static const char* TAG = "syslog";
 
 static syslog_host_t syslogHost = { .min_heap_size = CONFIG_SYSLOG_MINHEAP };
 static syslog_entry_t *syslogQueue = NULL;
@@ -329,7 +329,6 @@ static void __add_entry(syslog_entry_t *entry) {
     }
     ESP_LOGD(TAG, "%s: QE=%p", __FUNCTION__, syslogQueue);
     xEventGroupSetBits(appState, SYSLOG_QUEUED);
-    
 }
 
 static syslog_entry_t *__compose_common(int facility, int severity, const char *app, char *ret, int msglen) {
@@ -466,7 +465,20 @@ void openlog(const char *ident, int option, int facility) {
     xTaskCreate(&syslog_task, "syslog_task", 2048, NULL, 5, NULL);
 }
 
-void closelog(void) { /* NOP */ };
+void closelog(void) {
+    // flush message queue
+    EventBits_t bits;
+    do {
+        bits = xEventGroupWaitBits(appState, SYSLOG_QUEUED, pdFALSE, pdFALSE, 5000 / portTICK_PERIOD_MS);
+    } while (bits & SYSLOG_QUEUED);
+    close(syslogHost.sock);
+    if (NULL != syslogHost.appname) {
+        free(syslogHost.appname);
+    }
+    if (NULL != syslogHost.hostname) {
+        free(syslogHost.hostname);
+    }
+}
 
 void set_syslog_hostname(const char *hostname) {
     ESP_LOGD(TAG, "%s", __FUNCTION__);

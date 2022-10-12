@@ -220,7 +220,7 @@ static void enable_debug(bool enable) {
         esp_log_level_set("mqtt", ESP_LOG_DEBUG);
         esp_log_level_set("heap", ESP_LOG_DEBUG);
         esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
-        esp_log_level_set("syslog", ESP_LOG_DEBUG);
+        //esp_log_level_set("syslog", ESP_LOG_DEBUG);
         ESP_LOGI(TAG, "debug enabled");
     } else {
         esp_log_level_set("wifi", ESP_LOG_INFO);
@@ -234,7 +234,7 @@ static void enable_debug(bool enable) {
 }
 
 static void mqtt_action(const std::string &topic, const std::string &data) {
-    int match_exact = data.compare(identity);
+    bool match_exact = 0 == data.compare(identity);
     bool match_any = data.empty();
     if (match_exact && (0 == topic.compare("esp8266/nvserase"))) {
         ESP_LOGD(TAG, "Erasing non volatile storage");
@@ -250,7 +250,7 @@ static void mqtt_action(const std::string &topic, const std::string &data) {
     }
     if ((0 == topic.compare("esp8266/debug")) || (0 == topic.compare("esp8266/nodebug"))) {
         if (match_exact || match_any) {
-            enable_debug(0 == topic.compare("esp8266/nodebug"));
+            enable_debug(0 == topic.compare("esp8266/debug"));
         }
     }
 }
@@ -366,6 +366,7 @@ static void update_check_task(void * pvParameter) {
                 pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & OTA_REQUIRED) {
             ESP_LOGI(TAG, "Firmware update requested, shutting down MQTT");
+            syslog(LOG_NOTICE, "Firmware update requested, shutting down MQTT");
             ESP_ERROR_CHECK(esp_mqtt_client_stop(client));
             ESP_LOGD(TAG_MEM, "Free memory: %d bytes", esp_get_free_heap_size());
             xTaskCreate(&ota_task, "ota_task", 8192, ca_crt_start, 5, nullptr);
@@ -399,7 +400,6 @@ void app_main()
     ESP_LOGI(TAG, "APP build: %s %s", ad->date, ad->time);
     ESP_LOGI(TAG, "IDF version: %s", ad->idf_ver);
     appState = xEventGroupCreate();
-
     ESP_ERROR_CHECK(nvs_flash_init());
     // Get rid of stupid "Base MAC address is not set ..." message by
     // explicitely setting base MAC addr from EFUSE.
