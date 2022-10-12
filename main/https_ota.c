@@ -293,8 +293,6 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 void ota_task(void * pvParameter)
 {
     ESP_LOGI(TAG, "Checking %s", CONFIG_OTA_URI);
-    syslogx(LOG_NOTICE, TAG, "Checking %s", CONFIG_OTA_URI);
-    syslog_flush();
     esp_http_client_config_t config = {
         .url = CONFIG_OTA_URI,
         .cert_pem = (char *)pvParameter,
