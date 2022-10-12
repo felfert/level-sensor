@@ -293,7 +293,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_CONNECTED");
-            syslogx(LOG_INFO, TAG_MQTT, "Connected to broker");
+            syslogx(LOG_INFO, TAG_MQTT, "Connected to broker %s", CONFIG_MQTTS_URI);
             msg_id = esp_mqtt_client_subscribe(client, "esp8266/#", 0);
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity.c_str(), 0, 0, 0);
