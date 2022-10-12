@@ -237,7 +237,8 @@ static void mqtt_action(const std::string &topic, const std::string &data) {
     int match_exact = data.compare(identity);
     bool match_any = data.empty();
     if (match_exact && (0 == topic.compare("esp8266/nvserase"))) {
-        ESP_LOGI(TAG, "Erasing non volatile storage");
+        ESP_LOGD(TAG, "Erasing non volatile storage");
+        syslogx(LOG_NOTICE, TAG, "Erasing non volatile storage");
         ESP_ERROR_CHECK(nvs_flash_erase());
         return;
     }
@@ -273,10 +274,14 @@ static void ntp_sync_cb(struct timeval *tv) {
     }
 }
 
-static void log_ntpserver() {
+static void check_ntpserver() {
     const ip_addr_t* ntpserver = sntp_getserver(0);
     if (nullptr != ntpserver) {
         ESP_LOGI(TAG, "NTP:  " IPSTR, IP2STR(ntpserver));
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+        sntp_set_time_sync_notification_cb(ntp_sync_cb);
+        sntp_init();
     } else {
         ESP_LOGW(TAG, "NTP:  NONE");
     }
@@ -288,6 +293,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_CONNECTED");
+            syslogx(LOG_INFO, TAG_MQTT, "Connected to broker");
             msg_id = esp_mqtt_client_subscribe(client, "esp8266/#", 0);
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity.c_str(), 0, 0, 0);
@@ -419,11 +425,7 @@ void app_main()
                 ESP_LOGI(TAG, "IP:   " IPSTR, IP2STR(&ip.ip));
                 ESP_LOGI(TAG, "MASK: " IPSTR, IP2STR(&ip.netmask));
                 ESP_LOGI(TAG, "GW:   " IPSTR, IP2STR(&ip.gw));
-                log_ntpserver();
-                sntp_setoperatingmode(SNTP_OPMODE_POLL);
-                sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
-                sntp_set_time_sync_notification_cb(ntp_sync_cb);
-                sntp_init();
+                check_ntpserver();
             }
 
             if (ESP_OK == esp_mqtt_client_start(client)) {

@@ -28,9 +28,7 @@ enum syslog_state {
     SYSLOG_INIT,        // WIFI avail, must initialize
     SYSLOG_INITDONE,
     SYSLOG_READY,       // Wifi established, ready to send
-    SYSLOG_SENDING,     // UDP package on the air
     SYSLOG_SEND,
-    SYSLOG_SENT,
     SYSLOG_HALTED,      // heap full, discard message
     SYSLOG_ERROR
 };
@@ -53,7 +51,7 @@ struct syslog_entry_t {
     syslog_entry_t *next;
     time_t      now;
     uint16_t    pri;
-    char        msg[]; // Holds appname and message (both 0-terminated)
+    char        msg[]; // Holds appname followed by message (both 0-terminated)
 };
 
 #define TAG "syslog"
@@ -62,12 +60,9 @@ static syslog_host_t syslogHost = { .min_heap_size = CONFIG_SYSLOG_MINHEAP };
 static syslog_entry_t *syslogQueue = NULL;
 static enum syslog_state syslogState = SYSLOG_NONE;
 
-static void syslog_add_entry(syslog_entry_t *entry);
 static void syslog_task(void * pvParameter);
-static void syslog_send_udp(void);
-static syslog_entry_t *syslog_compose(int facility, int severity, const char *tag, const char *fmt, ...);
-static void syslog_init(const char *syslog_host);
-static void __syslog(int facility, int severity, const char *tag, const char *message, ...);
+static syslog_entry_t *__compose(int facility, int severity, const char *app, const char *fmt, ...);
+static void __syslog(int facility, int severity, const char *app, const char *fmt, ...);
 
 static void __syslog_set_hostname(const char *name) {
     ESP_LOGD(TAG, "%s", __FUNCTION__);
@@ -112,12 +107,8 @@ static const char *syslog_get_status(void) {
             return "SYSLOG_INITDONE";
         case SYSLOG_READY:
             return "SYSLOG_READY";
-        case SYSLOG_SENDING:
-            return "SYSLOG_SENDING";
         case SYSLOG_SEND:
             return "SYSLOG_SEND";
-        case SYSLOG_SENT:
-            return "SYSLOG_SENT";
         case SYSLOG_HALTED:
             return "SYSLOG_HALTED";
         case SYSLOG_ERROR:
@@ -135,70 +126,10 @@ static void syslog_set_status(enum syslog_state state) {
     }
 }
 
-/**
- * Main syslog task.
- */
-static void syslog_task(void * pvParameter) {
-
-    while (1) {
-        EventBits_t bits = xEventGroupWaitBits(appState, WIFI_CONNECTED, pdFALSE, pdFALSE, 100 / portTICK_PERIOD_MS);
-        if (bits & WIFI_CONNECTED) {
-            switch (syslogState) {
-
-                case SYSLOG_WAIT:
-                    ESP_LOGD(TAG, "%s: Wifi connected", syslog_get_status());
-                    syslog_set_status(SYSLOG_INIT);
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                    break;
-
-                case SYSLOG_INIT:
-                    ESP_LOGD(TAG, "%s: init syslog", syslog_get_status());
-                    syslog_set_status(SYSLOG_INITDONE);
-                    syslog_init(CONFIG_SYSLOG_HOST);
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                    break;
-
-                case SYSLOG_INITDONE:
-                    if (NULL != syslogQueue) {
-                        syslog_set_status(SYSLOG_READY);
-                    } else {
-                        vTaskDelay(10 / portTICK_PERIOD_MS);
-                    }
-                    break;
-
-                case SYSLOG_READY:
-                    bits = xEventGroupWaitBits(appState, SYSLOG_QUEUED, pdFALSE, pdFALSE, 5000 / portTICK_PERIOD_MS);
-                    syslog_send_udp();
-                    break;
-
-                case SYSLOG_SENDING:
-                    ESP_LOGD(TAG, "%s: delay", syslog_get_status());
-                    syslog_set_status(SYSLOG_SEND);
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                    break;
-
-                case SYSLOG_SEND:
-                    ESP_LOGD(TAG, "%s: start sending", syslog_get_status());
-                    syslog_send_udp();
-                    break;
-
-                default:
-                    ESP_LOGD(TAG, "%s: default", syslog_get_status());
-                    vTaskDelay(3000 / portTICK_PERIOD_MS);
-                    break;
-            }
-        } else {
-            ESP_LOGD(TAG, "%s: %s (delay 2s)", __FUNCTION__, syslog_get_status());
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-        }
-    }
-}
-
 #ifndef CONFIG_SYSLOG_SENDDATE
 # define CONFIG_SYSLOG_SENDDATE 0
 #endif
-static void
-syslog_send_udp() {
+static void __send_udp() {
     if (syslogQueue == NULL) {
         syslog_set_status(SYSLOG_READY);
         xEventGroupClearBits(appState, SYSLOG_QUEUED);
@@ -238,12 +169,13 @@ syslog_send_udp() {
             xEventGroupClearBits(appState, SYSLOG_QUEUED);
             syslog_set_status(SYSLOG_READY);
         } else {
-            syslog_set_status(SYSLOG_SENDING);
+            syslog_set_status(SYSLOG_SEND);
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
     }
 }
 
-static void syslog_init(const char *destination) {
+static void __init(const char *destination) {
 
     ESP_LOGD(TAG, "destination=%s *host=0x%x", destination,
             (NULL == destination) ?  0 : *destination);
@@ -313,7 +245,62 @@ static void syslog_init(const char *destination) {
     }
 }
 
-static void syslog_add_entry(syslog_entry_t *entry) {
+/**
+ * Main syslog task.
+ */
+static void syslog_task(void * pvParameter) {
+
+    while (1) {
+        EventBits_t bits = xEventGroupWaitBits(appState, WIFI_CONNECTED, pdFALSE, pdFALSE, 100 / portTICK_PERIOD_MS);
+        if (bits & WIFI_CONNECTED) {
+            switch (syslogState) {
+
+                case SYSLOG_WAIT:
+                    ESP_LOGD(TAG, "%s: Wifi connected", syslog_get_status());
+                    syslog_set_status(SYSLOG_INIT);
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    break;
+
+                case SYSLOG_INIT:
+                    ESP_LOGD(TAG, "%s: init syslog", syslog_get_status());
+                    syslog_set_status(SYSLOG_INITDONE);
+                    __init(CONFIG_SYSLOG_HOST);
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    break;
+
+                case SYSLOG_INITDONE:
+                    if (NULL != syslogQueue) {
+                        syslog_set_status(SYSLOG_READY);
+                    } else {
+                        vTaskDelay(10 / portTICK_PERIOD_MS);
+                    }
+                    break;
+
+                case SYSLOG_READY:
+                    bits = xEventGroupWaitBits(appState, SYSLOG_QUEUED, pdFALSE, pdFALSE, 5000 / portTICK_PERIOD_MS);
+                    if (bits & SYSLOG_QUEUED) {
+                        __send_udp();
+                    }
+                    break;
+
+                case SYSLOG_SEND:
+                    ESP_LOGD(TAG, "%s: start sending", syslog_get_status());
+                    __send_udp();
+                    break;
+
+                default:
+                    ESP_LOGD(TAG, "%s: default", syslog_get_status());
+                    vTaskDelay(3000 / portTICK_PERIOD_MS);
+                    break;
+            }
+        } else {
+            ESP_LOGD(TAG, "%s: %s (delay 2s)", __FUNCTION__, syslog_get_status());
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+        }
+    }
+}
+
+static void __add_entry(syslog_entry_t *entry) {
     ESP_LOGD(TAG, "%s: %s E=%p QA=%p", __FUNCTION__, syslog_get_status(), entry, syslogQueue);
     taskENTER_CRITICAL();
     syslog_entry_t *pse = syslogQueue;
@@ -330,10 +317,10 @@ static void syslog_add_entry(syslog_entry_t *entry) {
         // ensure we have sufficient heap for the rest of the system
         if (esp_get_free_heap_size() < syslogHost.min_heap_size) {
             if (syslogState != SYSLOG_HALTED) {
-                ESP_LOGW(TAG, "syslog_add_entry: Warning: queue filled up, halted");
-                entry->next = syslog_compose(LOG_USER, LOG_CRIT, TAG, "queue filled up, halted");
+                ESP_LOGW(TAG, "%s: Warning: queue filled up, halted", __FUNCTION__);
+                entry->next = __compose(LOG_USER, LOG_CRIT, TAG, "queue filled up, halted");
                 if (syslogState == SYSLOG_READY) {
-                    syslog_send_udp();
+                    __send_udp();
                 }
                 syslog_set_status(SYSLOG_HALTED);
             }
@@ -345,7 +332,34 @@ static void syslog_add_entry(syslog_entry_t *entry) {
     
 }
 
-static syslog_entry_t * syslog_compose(int facility, int severity, const char *tag, const char *fmt, ...) {
+static syslog_entry_t *__compose_common(int facility, int severity, const char *app, char *ret, int msglen) {
+    int applen = ((NULL == app) ? strlen(syslogHost.appname) : strlen(app)) + 1;
+    ret = realloc(ret, msglen + applen + sizeof (syslog_entry_t));
+    if (NULL == ret) {
+        return NULL;
+    }
+    ESP_LOGD(TAG, "%s: free=%d", __FUNCTION__, esp_get_free_heap_size());
+    char *mdest = ((syslog_entry_t *)ret)->msg + applen;
+    memmove(mdest, ret, msglen);
+    ESP_LOGD(TAG, "msg=%s", mdest);
+    if (NULL == app) {
+        strcpy(((syslog_entry_t *)ret)->msg, syslogHost.appname);
+    } else {
+        strcpy(((syslog_entry_t *)ret)->msg, app);
+    }
+    ESP_LOGD(TAG, "app=%s", ((syslog_entry_t *)ret)->msg);
+    ESP_LOGD(TAG, "sz=%d", msglen + applen + sizeof (syslog_entry_t));
+    if (NTP_SYNCED & xEventGroupWaitBits(appState, NTP_SYNCED, pdFALSE, pdFALSE, 0)) {
+        time(&(((syslog_entry_t*)ret)->now));
+    } else {
+        ((syslog_entry_t*)ret)->now = WDEV_NOW() / 1000000;
+    }
+    ((syslog_entry_t*)ret)->pri = facility | severity;
+    ((syslog_entry_t*)ret)->next = NULL;
+    return (syslog_entry_t *)ret;
+}
+
+static syslog_entry_t * __compose(int facility, int severity, const char *app, const char *fmt, ...) {
     ESP_LOGD(TAG, "%s", __FUNCTION__);
     char *ret = NULL;
     va_list alist;
@@ -355,65 +369,31 @@ static syslog_entry_t * syslog_compose(int facility, int severity, const char *t
     if (0 > msglen) {
         return NULL;
     }
-    msglen++;
-    int applen = strlen(syslogHost.appname) + 1;
-    ret = realloc(ret, msglen + applen + sizeof (syslog_entry_t));
-    if (NULL == ret) {
-        return NULL;
-    }
-    ESP_LOGD(TAG, "%s: free=%d", __FUNCTION__, esp_get_free_heap_size());
-    char *mdest = ((syslog_entry_t *)ret)->msg + applen;
-    memmove(mdest, ret, msglen);
-    ESP_LOGD(TAG, "msg=%s", mdest);
-    strcpy(((syslog_entry_t *)ret)->msg, syslogHost.appname);
-    ESP_LOGD(TAG, "app=%s", ((syslog_entry_t *)ret)->msg);
-    ESP_LOGD(TAG, "sz=%d", msglen + applen + sizeof (syslog_entry_t));
-    if (NTP_SYNCED & xEventGroupWaitBits(appState, NTP_SYNCED, pdFALSE, pdFALSE, 0)) {
-        time(&(((syslog_entry_t*)ret)->now));
-    } else {
-        ((syslog_entry_t*)ret)->now = WDEV_NOW() / 1000000;
-    }
-    ((syslog_entry_t*)ret)->pri = facility | severity;
-    ((syslog_entry_t*)ret)->next = NULL;
-    return (syslog_entry_t *)ret;
+    return __compose_common(facility, severity, app, ret, msglen + 1);
 }
 
-static syslog_entry_t * syslog_vcompose(int facility, int severity, const char *tag, const char *fmt, va_list alist) {
+static syslog_entry_t * __vcompose(int facility, int severity, const char *app, const char *fmt, va_list alist) {
     ESP_LOGD(TAG, "%s", __FUNCTION__);
     char *ret = NULL;
     int msglen = vasprintf(&ret, fmt, alist);
     if (0 > msglen) {
         return NULL;
     }
-    int applen = strlen(syslogHost.appname) + 1;
+    int applen = ((NULL == app) ? strlen(syslogHost.appname) : strlen(app)) + 1;
     ret = realloc(ret, msglen + applen + sizeof (syslog_entry_t));
     if (NULL == ret) {
         return NULL;
     }
-    msglen++;
-    ESP_LOGD(TAG, "%s: free=%d", __FUNCTION__, esp_get_free_heap_size());
-    char *mdest = ((syslog_entry_t *)ret)->msg + applen;
-    memmove(mdest, ret, msglen);
-    ESP_LOGD(TAG, "msg=%s", mdest);
-    strcpy(((syslog_entry_t *)ret)->msg, syslogHost.appname);
-    ESP_LOGD(TAG, "app=%s", ((syslog_entry_t *)ret)->msg);
-    ESP_LOGD(TAG, "sz=%d", msglen + applen + sizeof (syslog_entry_t));
-    if (NTP_SYNCED & xEventGroupWaitBits(appState, NTP_SYNCED, pdFALSE, pdFALSE, 0)) {
-        time(&(((syslog_entry_t*)ret)->now));
-    } else {
-        ((syslog_entry_t*)ret)->now = WDEV_NOW() / 1000000;
-    }
-    ((syslog_entry_t*)ret)->pri = facility | severity;
-    ((syslog_entry_t*)ret)->next = NULL;
-    return (syslog_entry_t *)ret;
+    return __compose_common(facility, severity, app, ret, msglen + 1);
 }
 
-static void __syslog(int facility, int severity, const char *tag, const char *fmt, ...)
+static void __syslog(int facility, int severity, const char *app, const char *fmt, ...)
 {
     ESP_LOGD(TAG, "%s status: %s", __FUNCTION__, syslog_get_status());
 
-    if (strlen(CONFIG_SYSLOG_HOST) == 0 || syslogState == SYSLOG_ERROR || syslogState == SYSLOG_HALTED)
+    if (strlen(CONFIG_SYSLOG_HOST) == 0 || syslogState == SYSLOG_ERROR || syslogState == SYSLOG_HALTED) {
         return;
+    }
 
     if (severity > CONFIG_SYSLOG_FILTER) {
         return;
@@ -421,19 +401,19 @@ static void __syslog(int facility, int severity, const char *tag, const char *fm
 
     // compose the syslog message
     void *arg = __builtin_apply_args();
-    void *res = __builtin_apply((void*)syslog_compose, arg, 128);
+    void *res = __builtin_apply((void*)__compose, arg, 128);
     if (NULL == res) {
         return;
     }
     syslog_entry_t *se  = *(syslog_entry_t **)res;
-    syslog_add_entry(se);
+    __add_entry(se);
 
     if (syslogState == SYSLOG_NONE) {
         syslog_set_status(SYSLOG_WAIT);
     }
 }
 
-static void __vsyslog(int facility, int severity, const char *tag, const char *fmt, va_list arglist)
+static void __vsyslog(int facility, int severity, const char *app, const char *fmt, va_list arglist)
 {
     ESP_LOGD(TAG, "%s status: %s", __FUNCTION__, syslog_get_status());
 
@@ -445,12 +425,12 @@ static void __vsyslog(int facility, int severity, const char *tag, const char *f
     }
 
     // compose the syslog message
-    void *res = syslog_vcompose(facility, severity, tag, fmt, arglist);
+    void *res = __vcompose(facility, severity, app, fmt, arglist);
     if (NULL == res) {
         return;
     }
     syslog_entry_t *se  = (syslog_entry_t *)res;
-    syslog_add_entry(se);
+    __add_entry(se);
 
     if (syslogState == SYSLOG_NONE) {
         syslog_set_status(SYSLOG_WAIT);
@@ -458,11 +438,25 @@ static void __vsyslog(int facility, int severity, const char *tag, const char *f
 }
 
 void syslog(int __pri, const char *__fmt, ...) {
-    ESP_LOGD(TAG, "%s", __FUNCTION__);
-    va_list arglist;
-    va_start(arglist, __fmt);
-    __vsyslog(syslogHost.facility, __pri, TAG, __fmt, arglist);
-    va_end(arglist);
+    va_list alist;
+    va_start(alist, __fmt);
+    __vsyslog(syslogHost.facility, __pri, NULL, __fmt, alist);
+    va_end(alist);
+}
+
+void vsyslog(int __pri, const char *__fmt, va_list alist) {
+    __vsyslog(syslogHost.facility, __pri, NULL, __fmt, alist);
+}
+
+void syslogx(int __pri, const char *app, const char *__fmt, ...) {
+    va_list alist;
+    va_start(alist, __fmt);
+    __vsyslog(syslogHost.facility, __pri, app, __fmt, alist);
+    va_end(alist);
+}
+
+void vsyslogx(int __pri, const char *app, const char *__fmt, va_list alist) {
+    __vsyslog(syslogHost.facility, __pri, app, __fmt, alist);
 }
 
 void openlog(const char *ident, int option, int facility) {
@@ -471,6 +465,8 @@ void openlog(const char *ident, int option, int facility) {
     syslogHost.facility = facility;
     xTaskCreate(&syslog_task, "syslog_task", 2048, NULL, 5, NULL);
 }
+
+void closelog(void) { /* NOP */ };
 
 void set_syslog_hostname(const char *hostname) {
     ESP_LOGD(TAG, "%s", __FUNCTION__);

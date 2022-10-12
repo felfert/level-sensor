@@ -62,11 +62,30 @@
 extern "C" {
 #endif
 
-/* Generate a log message using FMT string and option arguments. */
+/** See syslog(3) */
 extern void syslog(int __pri, const char *__fmt, ...)
     __attribute__ ((__format__ (__printf__, 2, 3)));
 
+/** See vsyslog(3) */
+extern void vsyslog(int __pri, const char *__fmt, va_list alist);
+
+/** app overrides the ident, specified in openlog for this one message */
+extern void syslogx(int __pri, const char *app, const char *__fmt, ...)
+    __attribute__ ((__format__ (__printf__, 3, 4)));
+
+/** app overrides the ident, specified in openlog for this one message */
+extern void vsyslogx(int __pri, const char *app, const char *__fmt, va_list alist);
+
+/** See openlog(3) except option has no effect */
 extern void openlog(const char *ident, int option, int facility);
+
+/** NOP - just for compatibilioty */
+extern void closelog(void);
+
+/** See setlogmask(3) */
+extern int setlogmask(int mask);
+
+/** Sets the local hostname, used when sending */
 extern void set_syslog_hostname(const char *hostname);
 
 #ifdef __cplusplus
