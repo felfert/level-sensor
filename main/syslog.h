@@ -80,6 +80,8 @@ extern void vsyslogx(int __pri, const char *app, const char *__fmt, va_list alis
 extern void openlog(const char *ident, int option, int facility);
 
 /** Blocks, until syslog message-queue is empty */
+extern void syslog_flush(void);
+
 extern void closelog(void);
 
 /** See setlogmask(3) */

@@ -367,6 +367,7 @@ static void update_check_task(void * pvParameter) {
         if (bits & OTA_REQUIRED) {
             ESP_LOGI(TAG, "Firmware update requested, shutting down MQTT");
             syslog(LOG_NOTICE, "Firmware update requested, shutting down MQTT");
+            syslog_flush();
             ESP_ERROR_CHECK(esp_mqtt_client_stop(client));
             ESP_LOGD(TAG_MEM, "Free memory: %d bytes", esp_get_free_heap_size());
             xTaskCreate(&ota_task, "ota_task", 8192, ca_crt_start, 5, nullptr);

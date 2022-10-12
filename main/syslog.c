@@ -465,12 +465,17 @@ void openlog(const char *ident, int option, int facility) {
     xTaskCreate(&syslog_task, "syslog_task", 2048, NULL, 5, NULL);
 }
 
-void closelog(void) {
+void syslog_flush(void) {
     // flush message queue
     EventBits_t bits;
     do {
         bits = xEventGroupWaitBits(appState, SYSLOG_QUEUED, pdFALSE, pdFALSE, 5000 / portTICK_PERIOD_MS);
     } while (bits & SYSLOG_QUEUED);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+void closelog(void) {
+    syslog_flush();
     close(syslogHost.sock);
     if (NULL != syslogHost.appname) {
         free(syslogHost.appname);
