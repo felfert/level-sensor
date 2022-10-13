@@ -131,6 +131,9 @@ static void syslog_set_status(enum syslog_state state) {
 #endif
 static void __send_udp() {
     if (syslogQueue == NULL) {
+        if (syslogState == SYSLOG_HALTED) {
+            ESP_LOGI(TAG, "%s: queue empty, resumed", __FUNCTION__);
+        }
         syslog_set_status(SYSLOG_READY);
         xEventGroupClearBits(appState, SYSLOG_QUEUED);
     } else {
@@ -149,7 +152,11 @@ static void __send_udp() {
         char *p = NULL;
         int len = asprintf(&p, "<%d>1 %s %s %s - - %s", pse->pri, tstamp, syslogHost.hostname, appname, msg);
         if (0 > len) {
-            ESP_LOGE(TAG, "%s: out of memory", __FUNCTION__);
+            ESP_LOGE(TAG, "%s: out of memory dropping message", __FUNCTION__);
+            taskENTER_CRITICAL();
+            syslogQueue = syslogQueue->next;
+            taskEXIT_CRITICAL();
+            free(pse);
             return;
         }
         ESP_LOGD(TAG, "%s: len=%d, dgram='%s'", __FUNCTION__, len, p);
@@ -284,6 +291,11 @@ static void syslog_task(void * pvParameter) {
                     break;
 
                 case SYSLOG_SEND:
+                    ESP_LOGD(TAG, "%s: start sending", syslog_get_status());
+                    __send_udp();
+                    break;
+
+                case SYSLOG_HALTED:
                     ESP_LOGD(TAG, "%s: start sending", syslog_get_status());
                     __send_udp();
                     break;
