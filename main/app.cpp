@@ -238,13 +238,13 @@ static void mqtt_action(const std::string &topic, const std::string &data) {
     bool match_any = data.empty();
     if (match_exact && (0 == topic.compare("esp8266/nvserase"))) {
         ESP_LOGD(TAG, "Erasing non volatile storage");
-        syslogx(LOG_NOTICE, TAG, "Erasing non volatile storage");
+        syslog(LOG_NOTICE, "Erasing non volatile storage");
         ESP_ERROR_CHECK(nvs_flash_erase());
         return;
     }
     if (match_exact && (0 == topic.compare("esp8266/reboot"))) {
         ESP_LOGD(TAG, "Rebooting...");
-        syslogx(LOG_NOTICE, TAG, "Rebooting...");
+        syslog(LOG_NOTICE, "Rebooting...");
         closelog();
         esp_restart();
         return;
@@ -300,7 +300,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGD(TAG_MQTT, "MQTT_EVENT_CONNECTED");
-            syslogx(LOG_INFO, TAG_MQTT, "Connected to broker %s", CONFIG_MQTTS_URI);
+            syslog(LOG_INFO, "Connected to broker %s", CONFIG_MQTTS_URI);
             msg_id = esp_mqtt_client_subscribe(client, "esp8266/#", 0);
             ESP_LOGD(TAG_MQTT, "sent subscribe successful, msg_id=%d", msg_id);
             msg_id = esp_mqtt_client_publish(client, "esp8266/start", identity.c_str(), 0, 0, 0);
@@ -421,7 +421,7 @@ void app_main()
     sntp_servermode_dhcp(1);
     init_identity();
     set_syslog_hostname(identity.c_str());
-    openlog("sensor", 0, LOG_USER);
+    openlog(CONFIG_LWIP_LOCAL_HOSTNAME, 0, LOG_USER);
     wifi_init();
     mqtt_init();
     tcpip_adapter_ip_info_t ip;

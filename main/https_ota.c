@@ -64,14 +64,14 @@ static void get_if_modified_since() {
                 break;
             default:
                 ESP_LOGE(TAG, "Unable to read NVS: %s", esp_err_to_name(err));
-                syslogx(LOG_ERR, TAG, "Unable to read NVS: %s", esp_err_to_name(err));
+                syslog(LOG_ERR, "Unable to read NVS: %s", esp_err_to_name(err));
                 if_modified_since[0] = '\0';
                 break;
         }
         nvs_close(nvs_handle);
     } else {
         ESP_LOGE(TAG, "Unable to open NVS: %s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "Unable to open NVS: %s", esp_err_to_name(err));
+        syslog(LOG_ERR, "Unable to open NVS: %s", esp_err_to_name(err));
         if_modified_since[0] = '\0';
     }
 }
@@ -90,14 +90,14 @@ static void set_if_modified_since(const char *value) {
                 break;
             default:
                 ESP_LOGE(TAG, "Unable to write NVS: %s", esp_err_to_name(err));
-                syslogx(LOG_ERR, TAG, "Unable to write NVS: %s", esp_err_to_name(err));
+                syslog(LOG_ERR, "Unable to write NVS: %s", esp_err_to_name(err));
                 break;
         }
         nvs_commit(nvs_handle);
         nvs_close(nvs_handle);
     } else {
         ESP_LOGE(TAG, "Unable to open NVS: %s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "Unable to open NVS: %s", esp_err_to_name(err));
+        syslog(LOG_ERR, "Unable to open NVS: %s", esp_err_to_name(err));
     }
 }
 
@@ -112,14 +112,14 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     invalid_content_type = 0;
     if (!config) {
         ESP_LOGE(TAG, "esp_http_client config not found");
-        syslogx(LOG_ERR, TAG, "esp_http_client config not found");
+        syslog(LOG_ERR, "esp_http_client config not found");
         return ESP_ERR_INVALID_ARG;
     }
 
 #if !CONFIG_OTA_ALLOW_HTTP
     if (!config->cert_pem) {
         ESP_LOGE(TAG, "Server certificate not found in esp_http_client config");
-        syslogx(LOG_ERR, TAG, "Server certificate not found in esp_http_client config");
+        syslog(LOG_ERR, "Server certificate not found in esp_http_client config");
         return ESP_FAIL;
     }
 #endif
@@ -127,14 +127,14 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     esp_http_client_handle_t client = esp_http_client_init(config);
     if (client == NULL) {
         ESP_LOGE(TAG, "Failed to initialize HTTP connection");
-        syslogx(LOG_ERR, TAG, "Failed to initialize HTTP connection");
+        syslog(LOG_ERR, "Failed to initialize HTTP connection");
         return ESP_FAIL;
     }
 
 #if !CONFIG_OTA_ALLOW_HTTP
     if (esp_http_client_get_transport_type(client) != HTTP_TRANSPORT_OVER_SSL) {
         ESP_LOGE(TAG, "Transport is not over HTTPS");
-        syslogx(LOG_ERR, TAG, "Transport is not over HTTPS");
+        syslog(LOG_ERR, "Transport is not over HTTPS");
         return ESP_FAIL;
     }
 #endif
@@ -144,7 +144,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "Failed to open HTTPS connection: %s", esp_err_to_name(err));
+        syslog(LOG_ERR, "Failed to open HTTPS connection: %s", esp_err_to_name(err));
         return err;
     }
     esp_http_client_fetch_headers(client);
@@ -152,13 +152,13 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     int http_status = esp_http_client_get_status_code(client);
     if (304 <= http_status) {
         ESP_LOGI(TAG, "No new firmware available");
-        syslogx(LOG_NOTICE, TAG, "No new firmware available");
+        syslog(LOG_NOTICE, "No new firmware available");
         http_cleanup(client);
         return ESP_ERR_INVALID_STATE;
     }
     if (400 <= http_status) {
         ESP_LOGE(TAG, "HTTP request returned error %d", http_status);
-        syslogx(LOG_ERR, TAG, "HTTP request returned error %d", http_status);
+        syslog(LOG_ERR, "HTTP request returned error %d", http_status);
         http_cleanup(client);
         return ESP_FAIL;
     }
@@ -171,11 +171,11 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     esp_ota_handle_t update_handle = 0;
     const esp_partition_t *update_partition = NULL;
     ESP_LOGI(TAG, "Downloading ...");
-    syslogx(LOG_INFO, TAG, "Downloading ...");
+    syslog(LOG_INFO, "Downloading ...");
     update_partition = esp_ota_get_next_update_partition(NULL);
     if (update_partition == NULL) {
         ESP_LOGE(TAG, "Passive OTA partition not found");
-        syslogx(LOG_ERR, TAG, "Passive OTA partition not found");
+        syslog(LOG_ERR, "Passive OTA partition not found");
         http_cleanup(client);
         return ESP_FAIL;
     }
@@ -185,7 +185,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed, error=%s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "esp_ota_begin failed, error=%s", esp_err_to_name(err));
+        syslog(LOG_ERR, "esp_ota_begin failed, error=%s", esp_err_to_name(err));
         http_cleanup(client);
         return err;
     }
@@ -195,7 +195,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     char *upgrade_data_buf = (char *)malloc(OTA_BUF_SIZE);
     if (!upgrade_data_buf) {
         ESP_LOGE(TAG, "Could not allocate memory to upgrade data buffer");
-        syslogx(LOG_ERR, TAG, "Could not allocate memory to upgrade data buffer");
+        syslog(LOG_ERR, "Could not allocate memory to upgrade data buffer");
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "Please wait. This may take time");
@@ -210,7 +210,7 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
         if (data_read < 0) {
             printf("\r\n");
             ESP_LOGE(TAG, "SSL data read error");
-            syslogx(LOG_ERR, TAG, "SSL data read error");
+            syslog(LOG_ERR, "SSL data read error");
             break;
         }
         if (data_read > 0) {
@@ -229,18 +229,18 @@ static esp_err_t https_ota(const esp_http_client_config_t *config)
     esp_err_t ota_end_err = esp_ota_end(update_handle);
     if (ota_write_err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_write failed, error=%s", esp_err_to_name(ota_write_err));
-        syslogx(LOG_ERR, TAG, "esp_ota_write failed, error=%s", esp_err_to_name(ota_write_err));
+        syslog(LOG_ERR, "esp_ota_write failed, error=%s", esp_err_to_name(ota_write_err));
         return ota_write_err;
     } else if (ota_end_err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end failed, err=%s. Image is invalid", esp_err_to_name(ota_end_err));
-        syslogx(LOG_ERR, TAG, "esp_ota_end failed, err=%s. Image is invalid", esp_err_to_name(ota_end_err));
+        syslog(LOG_ERR, "esp_ota_end failed, err=%s. Image is invalid", esp_err_to_name(ota_end_err));
         return ota_end_err;
     }
 
     err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_set_boot_partition failed, err=%s", esp_err_to_name(err));
-        syslogx(LOG_ERR, TAG, "esp_ota_set_boot_partition failed, err=%s", esp_err_to_name(err));
+        syslog(LOG_ERR, "esp_ota_set_boot_partition failed, err=%s", esp_err_to_name(err));
         return err;
     }
     ESP_LOGD(TAG, "esp_ota_set_boot_partition succeeded"); 
@@ -272,7 +272,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
             }
             if (0 == strcasecmp(evt->header_key, "Content-Type") && strcmp(evt->header_value, "application/octet-stream")) {
                 ESP_LOGE(TAG, "Invalid content type %s", evt->header_value);
-                syslogx(LOG_ERR, TAG, "Invalid content type %s", evt->header_value);
+                syslog(LOG_ERR, "Invalid content type %s", evt->header_value);
                 invalid_content_type = 1;
                 return ESP_FAIL; // This is ignored in esp_http_client - (design flaw?)
             }
@@ -304,13 +304,13 @@ void ota_task(void * pvParameter)
             set_if_modified_since(last_modified);
         }
         ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
-        syslogx(LOG_NOTICE, TAG, "Firmware upgrade successful, rebooting...");
+        syslog(LOG_NOTICE, "Firmware upgrade successful, rebooting...");
         closelog();
         esp_restart();
     } else {
         if (ESP_ERR_INVALID_STATE != ret) {
             ESP_LOGE(TAG, "Firmware upgrade failed");
-            syslogx(LOG_ERR, TAG, "Firmware upgrade failed");
+            syslog(LOG_ERR, "Firmware upgrade failed");
         }
         xEventGroupSetBits(appState, OTA_DONE);
         vTaskDelete(NULL);
