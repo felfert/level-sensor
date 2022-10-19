@@ -378,7 +378,7 @@ static void update_check_task(void * pvParameter) {
             ESP_ERROR_CHECK(esp_mqtt_client_stop(client));
             sntp_stop();
             ESP_LOGD(TAG_MEM, "Free memory: %d bytes", esp_get_free_heap_size());
-            xTaskCreate(&ota_task, "ota_task", 8192, ca_crt_start, 5, nullptr);
+            xTaskCreate(&ota_task, "ota_task", 9216, ca_crt_start, 5, nullptr);
             while (true) {
                 bits = xEventGroupWaitBits(appState, OTA_DONE, pdTRUE, pdFALSE, portMAX_DELAY);
                 if (bits & OTA_DONE) {
