@@ -242,6 +242,13 @@ static void mqtt_action(const std::string &topic, const std::string &data) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         return;
     }
+    if (match_exact && (0 == topic.compare("esp8266/reboot"))) {
+        ESP_LOGD(TAG, "Rebooting...");
+        syslogx(LOG_NOTICE, TAG, "Rebooting...");
+        closelog();
+        esp_restart();
+        return;
+    }
     if (0 == topic.compare("esp8266/update")) {
         if (match_exact || match_any) {
             xEventGroupSetBits(appState, OTA_REQUIRED);
