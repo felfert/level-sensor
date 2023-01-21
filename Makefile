@@ -13,6 +13,8 @@ $(eval $(subst https://,,$(shell grep CONFIG_OTA_URI sdkconfig)))
 UFILE := $(notdir "$(CONFIG_OTA_URI)")
 $(eval $(shell openssl x509 -noout -subject -in main/client.crt -nameopt sep_multiline | grep CN=))
 
-otaupdate: all
+otasave: all
 	scp build/$(PROJECT_NAME).bin otaserver:/var/www/html/fsun/esp8266_updates/$(UFILE)
+
+otaupdate: otasave
 	espupdate $(CN)
