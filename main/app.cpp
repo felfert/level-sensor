@@ -55,7 +55,6 @@ static const int MQTT_CONNECTED = BIT1;
 static const int OTA_REQUIRED   = BIT2;
 const int OTA_DONE              = BIT3;
 const int NTP_SYNCED            = BIT4;
-const int SYSLOG_QUEUED         = BIT5;
 
 static const esp_app_desc_t *ad;
 

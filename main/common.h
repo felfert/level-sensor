@@ -9,7 +9,7 @@ extern EventGroupHandle_t appState;
 extern const int NTP_SYNCED;
 extern const int OTA_DONE;
 extern const int WIFI_CONNECTED;
-extern const int SYSLOG_QUEUED;
+
 
 #ifdef __cplusplus
 extern "C" {
