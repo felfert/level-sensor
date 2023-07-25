@@ -27,7 +27,7 @@ This is WIP
 3. From your PKI, copy the client certificate (PEM-encoded text) to `main/client.crt`
 4. From your PKI, copy the client key (PEM-encoded text) to `main/client.key`
 5. Connect your target board via USB
-6. Run make flash monitor
+6. Run `make flash monitor`
 
 ### Note:
 There are **A LOT** of "HOWTOs" and instructions on the Internet which use the Arduino IDE and an **ancient** NON-OSS SDK.
